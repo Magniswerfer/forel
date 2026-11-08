@@ -10,7 +10,7 @@ import Testing
         let manager = manager(store: Store(), client: client)
         manager.start()
         await Task.yield()
-        #expect(manager.state == .free)
+        #expect(manager.state == .pro)
         #expect(await client.calls == 0)
     }
 
@@ -29,12 +29,12 @@ import Testing
         let key = Curve25519.Signing.PrivateKey()
         let client = PaidClient(token: try token(key: key))
         let free = manager(store: secureStore(), client: client, publicKey: key.publicKey.rawRepresentation)
-        #expect(free.state == .free)
+        #expect(free.state == .pro)
         #expect(backing.loads == 1)
         let restartedFree = manager(store: secureStore(), client: client, publicKey: key.publicKey.rawRepresentation)
         restartedFree.start()
         await Task.yield()
-        #expect(restartedFree.state == .free)
+        #expect(restartedFree.state == .pro)
         #expect(backing.loads == 1)
         #expect(await client.calls == 0)
         await restartedFree.activate(licenseKey: "PRO-KEY")
@@ -50,7 +50,7 @@ import Testing
         await client.setValid()
         await restartedPro.deactivate()
         let reads = backing.loads
-        #expect(manager(store: secureStore(), client: client).state == .free)
+        #expect(manager(store: secureStore(), client: client).state == .pro)
         #expect(backing.loads == reads)
     }
 
@@ -69,12 +69,12 @@ import Testing
         #expect(restarted.state == .pro)
         await client.setRevoked()
         await restarted.validate()
-        #expect(restarted.state == .free)
-        #expect(self.manager(store: store, client: client, publicKey: key.publicKey.rawRepresentation).state == .free)
+        #expect(restarted.state == .pro)
+        #expect(self.manager(store: store, client: client, publicKey: key.publicKey.rawRepresentation).state == .pro)
         await client.setValid()
         await restarted.activate(licenseKey: "PRO-KEY")
         await restarted.deactivate()
-        #expect(restarted.state == .free)
+        #expect(restarted.state == .pro)
         #expect(store.record?.licenseKey == nil)
     }
 
@@ -84,7 +84,7 @@ import Testing
         let client = PaidClient(token: try token(key: key, kind: kind))
         let manager = manager(store: Store(), client: client, publicKey: key.publicKey.rawRepresentation)
         await manager.activate(licenseKey: "PRO-KEY")
-        #expect(manager.state == .free)
+        #expect(manager.state == .pro)
         #expect(manager.lastError != nil)
     }
 

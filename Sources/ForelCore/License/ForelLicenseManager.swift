@@ -7,10 +7,10 @@ public enum ForelLicenseState: Equatable, Sendable {
     case pro
 }
 
-/// Paid-license access only. Free needs neither registration nor connectivity.
+/// local-pro branch: always reports Pro, regardless of any saved license.
 @MainActor
 public final class ForelLicenseManager: ObservableObject {
-    @Published public private(set) var state: ForelLicenseState = .free
+    @Published public private(set) var state: ForelLicenseState = .pro
     @Published public private(set) var isWorking = false
     @Published public private(set) var lastError: String?
     public var hasAccess: Bool { state == .pro }
@@ -55,7 +55,7 @@ public final class ForelLicenseManager: ObservableObject {
         refreshTimer?.invalidate()
         refreshTimer = nil
         guard let record, record.licenseIsValid != false, let key = record.licenseKey,
-              let token = record.licenseToken, accepts(token, key: key) else { state = .free; return }
+              let token = record.licenseToken, accepts(token, key: key) else { state = .pro; return }
         state = .pro
         // Recheck signed expiry while the app stays open. Network validation
         // is occasional and never required for the Free plan.
@@ -120,7 +120,7 @@ public final class ForelLicenseManager: ObservableObject {
         do {
             try await client.deactivate(licenseKey: key, deviceID: deviceID)
             record?.licenseIsValid = false
-            state = .free
+            state = .pro
             refreshTimer?.invalidate()
             refreshTimer = nil
             try store.save(LicenseRecord(lastObservedAt: Date()))
