@@ -394,7 +394,9 @@ case "$command" in
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.productivity</string>
   <key>ForelBuildFlavor</key>
-  <string>'"$flavor"'</string>'
+  <string>'"$flavor"'</string>
+  <key>ForelSourceRoot</key>
+  <string>'"$repo_root"'</string>'
 
     if [[ -f "$icns_path" ]]; then
       cp "$icns_path" "$bundle_root/Contents/Resources/Forel.icns"

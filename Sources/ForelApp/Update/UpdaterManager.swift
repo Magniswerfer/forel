@@ -78,6 +78,10 @@ final class UpdaterManager: ObservableObject {
     private let db: Database
     private var timer: Timer?
     private var pendingAssetURL: URL?
+    private var pendingTag: String?
+
+    private static let localBuildLog = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/Forel/local-pro-update.log")
 
     init(db: Database) {
         self.db = db
@@ -140,6 +144,7 @@ final class UpdaterManager: ObservableObject {
             latestVersion = latest
             releaseURL = release.htmlUrl
             pendingAssetURL = asset.browserDownloadURL
+            pendingTag = release.tagName
         }
     }
 
@@ -148,31 +153,71 @@ final class UpdaterManager: ObservableObject {
         NSWorkspace.shared.open(releaseURL)
     }
 
-    /// Downloads the matching .dmg, then hands off to a detached shell
-    /// helper that waits for this process to quit before swapping the app
-    /// bundle, so the install never touches files this process still has
-    /// open. Falls back to opening the release page if anything about the
-    /// automatic path isn't available (no matching asset, not running from
-    /// a packaged .app, install failure).
+    /// local-pro: rebuilds the new release from the source checkout recorded
+    /// in Info.plist (`scripts/local-pro-update.sh`) instead of downloading the
+    /// official DMG, which would replace this Pro build with a Free one. The
+    /// built DMG then goes through the same swap-and-relaunch helper.
     func installUpdate() {
         guard !isInstalling else { return }
         let appURL = Bundle.main.bundleURL
-        guard appURL.pathExtension == "app", let assetURL = pendingAssetURL else {
-            openReleasePage()
+        guard appURL.pathExtension == "app", let tag = pendingTag,
+              let sourceRoot = Bundle.main.infoDictionary?["ForelSourceRoot"] as? String else {
+            showLocalBuildFailure("UPDATE FAILED: This copy of Forel doesn't know where its source checkout is. "
+                                  + "Rebuild it once with ./build.sh package from the local-pro branch.")
             return
         }
         isInstalling = true
         installError = nil
-        Task {
-            do {
-                let dmgURL = try await Self.download(assetURL)
-                try Self.launchInstallerAndQuit(dmgURL: dmgURL, appURL: appURL)
-            } catch {
-                isInstalling = false
-                installError = "\(error)"
-                openReleasePage()
-            }
+        let dmgURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".dmg")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["\(sourceRoot)/scripts/local-pro-update.sh", tag, dmgURL.path]
+        process.currentDirectoryURL = URL(fileURLWithPath: sourceRoot)
+        process.terminationHandler = { [weak self] finished in
+            let succeeded = finished.terminationStatus == 0
+            Task { @MainActor in self?.finishLocalBuild(succeeded: succeeded, dmgURL: dmgURL, appURL: appURL) }
         }
+        do {
+            try FileManager.default.createDirectory(at: Self.localBuildLog.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: Self.localBuildLog.path, contents: nil)
+            let log = try FileHandle(forWritingTo: Self.localBuildLog)
+            process.standardOutput = log
+            process.standardError = log
+            try process.run()
+        } catch {
+            isInstalling = false
+            showLocalBuildFailure("UPDATE FAILED: Could not start the update script: \(error.localizedDescription)")
+        }
+    }
+
+    private func finishLocalBuild(succeeded: Bool, dmgURL: URL, appURL: URL) {
+        guard succeeded else {
+            isInstalling = false
+            showLocalBuildFailure(nil)
+            return
+        }
+        do {
+            try Self.launchInstallerAndQuit(dmgURL: dmgURL, appURL: appURL)
+        } catch {
+            isInstalling = false
+            showLocalBuildFailure("UPDATE FAILED: Could not install the built update: \(error.localizedDescription)")
+        }
+    }
+
+    /// Opens the build log, whose last lines explain in plain language why
+    /// the update stopped. `message` is appended first when the failure
+    /// happened in the app rather than in the script.
+    private func showLocalBuildFailure(_ message: String?) {
+        if let message {
+            installError = message
+            try? FileManager.default.createDirectory(at: Self.localBuildLog.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            try? (message + "\n").write(to: Self.localBuildLog, atomically: true, encoding: .utf8)
+        } else {
+            installError = "The local Pro update failed. See \(Self.localBuildLog.path)."
+        }
+        NSWorkspace.shared.open(Self.localBuildLog)
     }
 
     private func scheduleAutomaticChecks() {
@@ -269,14 +314,6 @@ final class UpdaterManager: ObservableObject {
             }
         }
         return .orderedSame
-    }
-
-    private static func download(_ assetURL: URL) async throws -> URL {
-        let (tempLocation, _) = try await URLSession.shared.download(from: assetURL)
-        let dmgURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".dmg")
-        try? FileManager.default.removeItem(at: dmgURL)
-        try FileManager.default.moveItem(at: tempLocation, to: dmgURL)
-        return dmgURL
     }
 
     /// Writes the swap helper to a temp script, spawns it detached from this
